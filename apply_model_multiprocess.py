@@ -78,6 +78,8 @@ def encode_me(rid, read, read_info, context, circle, edge_trim):
         chrom=chrom.replace('-','__')
     if ':' in chrom:
         chrom=chrom.replace(':','___')
+    if '.' in chrom:
+        chrom=chrom.replace('.','____')
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
@@ -135,12 +137,16 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
             no_me_b12['itemRgb'] = '255,0,0'
             no_me_b12['blockCount'] = 1
             no_me_b12['blockStarts'] = 1
+            no_me_b12['score'] = '.'
+
             if not circle:
                 no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
             else:
                 no_me_b12['blockSizes'] = no_me_b12['end']*3 - no_me_b12['start']
 
-            no_me_b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
+            no_me_b12 = no_me_b12.rename(columns={'rid': 'name'})
+                no_me_b12 = no_me_b12[['chrom', 'start', 'end', 'name', 'score', 'strand', 'thickStart', 'thickEnd', 'itemRgb', 'blockCount', 'blockSizes', 'blockStarts']]
+                chrom = chunk['chrom'].iloc[0]
         
         else:
             no_me_b12=pd.DataFrame()
@@ -157,6 +163,7 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
         b12['thickStart'] = b12['start']
         b12['thickEnd'] = b12['end']
         b12['itemRgb'] = '255,0,0'
+        b12['score'] = '.'
 
         # Grab methylations
         chunk = chunk['me'].str.split(pat=',', expand=True)
@@ -199,9 +206,20 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
 
         # Combine, sort bed12s
         b12 = b12.rename(columns={'rid': 'name'})
-        b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockStarts', 'blockSizes']
+        b12 = b12[['chrom', 'start', 'end', 'name', 'score', 'strand', 'thickStart', 'thickEnd', 'itemRgb', 'blockCount', 'blockSizes', 'blockStarts']]
         b12 = pd.concat([b12, no_me_b12])
         b12 = b12.sort_values(by=['chrom', 'start'])
+
+        # back to the origninal chromosome name
+        for chrName in b12['chrom'].unique():
+            initName = chrName
+            if '____' in chrName:
+                initName = chrName.replace('____', '.')
+            if '___' in chrName:
+                initName = chrName.replace('___', ':')
+            if '__' in chrName:
+                initName = chrName.replace('__', '-')
+            b12['chrom'].mask(b12['chrom'] == chrName, initName, inplace=True)
 
         # Write to a temporary file 
         tmp_file = os.path.join(tmp_dir, f"{dataset}_{i}.bed")
@@ -243,9 +261,9 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
     try:
         # read in fibertools output bedfile in chunks
         if min_me > 0:
-            reader = pd.read_csv(f, usecols=[0, 1, 2, 3, 13, 14, me_col], names=['chrom', 'start', 'end', 'rid', 'at_ct','me_ct','me'], sep='\t', comment='#', chunksize=chunk_size)
+            reader = pd.read_csv(f, usecols=[0, 1, 2, 3, 5, 13, 14, me_col], names=['chrom', 'start', 'end', 'rid', 'strand', 'at_ct','me_ct','me'], sep='\t', comment='#', chunksize=chunk_size)
         else:
-            reader = pd.read_csv(f, usecols=[0, 1, 2, 3, me_col], names=['chrom', 'start', 'end', 'rid', 'me'], sep='\t', comment='#', chunksize=chunk_size)
+            reader = pd.read_csv(f, usecols=[0, 1, 2, 3, 5, me_col], names=['chrom', 'start', 'end', 'rid', 'strand', 'me'], sep='\t', comment='#', chunksize=chunk_size)
         #assign each chunk to a pool
         with Pool(core_count) as pool:
             for i, chunk in enumerate(reader):
